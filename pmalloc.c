@@ -34,6 +34,7 @@ struct pm_block {
 typedef struct pm_block pm_block_t;
 
 static pm_block_t* g_free_list_head = NULL;	// global list of free mem blocks
+static long g_reuse_count;
 
 static inline size_t blk_hdr_size() {
     return sizeof (pm_block_t);
@@ -57,7 +58,7 @@ FILE* debug_stream() {
         assert(fp);
     }
 
-    return stderr;
+    return fp;
 }
 
 enum FREE_LIST_OP {REMOVE, ADD, TRAVERSE};
@@ -83,18 +84,20 @@ void free_list_op(pm_block_t *blk, enum FREE_LIST_OP op) {
         assert(itr);
 
         if (blk == g_free_list_head) {
-            g_free_list_head = NULL;
+            g_free_list_head = blk->next;
             return;
         }
         while (itr) {
             if (itr == blk) {
                 pm_block_t* prev_blk = itr->prev;
-                prev_blk->next = itr->next;
-                if (itr->next->prev) {
-                    itr->next->prev = prev_blk;
+                pm_block_t* next_blk = itr->next;
+                prev_blk->next = next_blk;
+                if (next_blk) {
+                    next_blk->prev = prev_blk;
                 }
-                itr = itr->next;
+                return;
             }
+            itr = itr->next;
         }
     }
         break;
@@ -132,18 +135,27 @@ void free_list_op(pm_block_t *blk, enum FREE_LIST_OP op) {
 }
 // Carve a large block to smaller block of size s and return the remaining free block
 pm_block_t* trim_block(pm_block_t* blk, size_t s) {
-    pm_block_t *free_blk = (pm_block_t *)(blk->user_data + s);
-    free_blk->size = blk->size - (blk_hdr_size() + s);
-    // some sanity check
-    assert(free_blk->size > 0);
+  // We want to ensure that we have atleast blk_hdr + 1 bytes worth of
+  // remaining space if we trim this block.
+  size_t remaining = blk->size - s;
+  if (remaining <  blk_hdr_size() + 1) {
+    return NULL;
+  }
 
-    // trim blk to new size
-    blk->size = s - blk_hdr_size();
-    free_blk->magic = PM_MAGIC;
-    free_blk->prev = NULL;
-    free_blk->next = NULL;
+  pm_block_t *free_blk = (pm_block_t *)(blk->user_data + s);
+  free_blk->size = blk->size - (blk_hdr_size() + s);
+  // some sanity check
+  assert(free_blk->size > 0);
+  assert(free_blk->size <= OS_MEM_ALLOC_SIZE);
 
-    return free_blk;
+  // trim blk to new size
+  blk->size = s - blk_hdr_size();
+  blk->magic = PM_MAGIC;
+  free_blk->magic = PM_MAGIC;
+  free_blk->prev = NULL;
+  free_blk->next = NULL;
+
+  return free_blk;
 }
 
 void* pm_malloc(size_t size) {
@@ -167,12 +179,16 @@ void* pm_malloc(size_t size) {
                 if (blk_itr->size == real_size) {
                     // Happy case, just remove from free list
                     free_list_op(blk_itr, REMOVE);
+                    g_reuse_count++;
                     return blk_to_user_data(blk_itr);
                 } else {
                     // Trim the larger block
                     free_list_op(blk_itr, REMOVE);
+                    g_reuse_count++;
                     pm_block_t* free_blk = trim_block(blk_itr, real_size);
-                    free_list_op(free_blk, ADD);
+                    if (free_blk) {
+                      free_list_op(free_blk, ADD);
+                    }
                     return blk_to_user_data(blk_itr);
                 }
         }
@@ -198,7 +214,9 @@ void* pm_malloc(size_t size) {
     alloc_blk->magic = PM_MAGIC;
     alloc_blk->size = OS_MEM_ALLOC_SIZE - blk_hdr_size();
     pm_block_t* free_blk = trim_block(alloc_blk, real_size);
-    free_list_op(free_blk, ADD);
+    if (free_blk) {
+      free_list_op(free_blk, ADD);
+    }
 
     return blk_to_user_data(alloc_blk);
 }
@@ -214,16 +232,12 @@ void pm_free(void *ptr) {
 }
 
 void pm_debug(const char* MSG) {
-  fprintf(debug_stream(), "p: [%s] \n", MSG);
+  fprintf(debug_stream(), "pm: [%s] \n", MSG);
   free_list_op(g_free_list_head, TRAVERSE);
 }
 
 void* malloc(size_t s) {
-  void* ret = pm_malloc(s);
-  pm_block_t *blk = user_data_to_blk(ret);
-
-  fprintf(debug_stream(), "pm: [pm_malloc %p] [size %lu] [blk size %lu]\n", ret, s, blk->size);
-  return ret;
+  return pm_malloc(s);
 }
 
 void free(void* ptr) {
@@ -232,21 +246,24 @@ void free(void* ptr) {
 
 int main () {
   void *arr[10];
-  for (int i = 0; i < 10; i++) {
-    size_t s = rand() % (1024 * 1024);
-    fprintf(stderr, "Call malloc size = %lu\n", s);
-    arr[i] = pm_malloc(s);
-    char* bufp = arr[i];
-    for (int k = 0; k < s; k++) {
-      bufp[k] = 'A';
-    }
-  }
 
-  pm_debug("POST ALLOC");
-  for (int i = 0; i < 10; i++) {
-    pm_free(arr[i]);
+  while (1) {
+    for (int i = 0; i < 10; i++) {
+      size_t s = rand() % (1024 * 1024);
+      arr[i] = pm_malloc(s);
+      char* bufp = arr[i];
+      for (int k = 0; k < s; k++) {
+        bufp[k] = 'A';
+      }
+    }
+
+    pm_debug("POST ALLOC");
+    for (int i = 0; i < 10; i++) {
+      pm_free(arr[i]);
+    }
+    pm_debug("POST DEALLOC");
+    fprintf(debug_stream(), "pm: reused blocks [%lu]\n", g_reuse_count);
   }
-  pm_debug("POST DEALLOC");
 
   return 0;
 }
