@@ -28,7 +28,7 @@ struct pm_block {
     size_t size; 				// Size of user data
     struct pm_block* next;
     struct pm_block* prev;
-    unsigned int magic;
+    unsigned int magic; // Paranoia that blk is sane
     char user_data[0];
 };
 typedef struct pm_block pm_block_t;
@@ -246,7 +246,7 @@ void free(void* ptr) {
 
 int main () {
   void *arr[10];
-
+  // stress test to check if allocator works fine
   while (1) {
     for (int i = 0; i < 10; i++) {
       size_t s = rand() % (1024 * 1024);
