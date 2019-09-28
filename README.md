@@ -1,29 +1,23 @@
 # pmalloc
-A poor mans memory allocator
+A poor mans memory allocator using a simple freelist.
+This is not thread safe.
+Fragmentation is a problem.
+
 ```
-darwin:pmalloc arakshit$ ./pmalloc
-Call malloc size = 16807
-Call malloc size = 408305
-Call malloc size = 503001
-Call malloc size = 330794
-Call malloc size = 112514
-Call malloc size = 449224
-Call malloc size = 364248
-Call malloc size = 330238
-Call malloc size = 208707
-Call malloc size = 263245
-p: [POST ALLOC]
-pm: [freeblk no. 0] [size 1206549]
-p: [POST DEALLOC]
-pm: [freeblk no. 0] [size 263245]
-pm: [freeblk no. 1] [size 208707]
-pm: [freeblk no. 2] [size 330238]
-pm: [freeblk no. 3] [size 364248]
-pm: [freeblk no. 4] [size 449224]
-pm: [freeblk no. 5] [size 112514]
-pm: [freeblk no. 6] [size 330794]
-pm: [freeblk no. 7] [size 503001]
-pm: [freeblk no. 8] [size 408305]
-pm: [freeblk no. 9] [size 16807]
-pm: [freeblk no. 10] [size 1206549]
+darwin:pmalloc arakshit$ make clean; make
+rm pmalloc
+clang -Wall -g pmalloc.c -o pmalloc
+darwin:pmalloc arakshit$ ./pmalloc&
+[1] 7572
+darwin:pmalloc arakshit$ tail pm_log
+pm: [freeblk no. 2291] [size 413825]
+pm: [freeblk no. 2292] [size 394100]
+pm: [freeblk no. 2293] [size 103634]
+pm: [freeblk no. 2294] [size 534786]
+pm: [freeblk no. 2295] [size 616460]
+pm: [freeblk no. 2296] [size 325101]
+pm: [freeblk no. 2297] [size 8913]
+pm: [freeblk no. 2298] [size 275760]
+pm: [freeblk no. 2299] [size 34669]
+pm: [freeblk no. 2
 ```
